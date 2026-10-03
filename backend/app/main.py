@@ -67,9 +67,10 @@ def week_board(week_id: int):
     assigns = [dict(r) for r in c.execute("SELECT * FROM assignments WHERE week_id=?", (week_id,))]
     members = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM members")}
     tasks = {r["id"]: r["title"] for r in c.execute("SELECT id,title FROM tasks")}
-    # 三路同钉·看板格：已确认对调的两格钉上同一份负荷差快照与在效留证数
+    # 三路同钉·看板格：仅已确认对调的两格钉上同一份负荷差快照与在效留证数；
+    # 已撤销单不钉格（快照行保留审计但不透出），看板文案随撤销回滚
     cell_swap = {}
-    for sw in c.execute("SELECT * FROM swap_requests WHERE week_id=? AND status IN ('confirmed','cancelled')", (week_id,)):
+    for sw in c.execute("SELECT * FROM swap_requests WHERE week_id=? AND status='confirmed'", (week_id,)):
         cell_swap[(sw["a_day"], sw["a_task"])] = sw["id"]
         cell_swap[(sw["b_day"], sw["b_task"])] = sw["id"]
     snaps = load_snapshot.by_week(c, week_id)
@@ -125,21 +126,12 @@ def list_swaps():
     c = connect()
     rows = [dict(r) for r in c.execute("SELECT * FROM swap_requests ORDER BY id DESC")]
     ev_counts = evidence.active_counts_by_swap(c)
-    weights = {r["id"]: r["weight"] for r in c.execute("SELECT id,weight FROM tasks")}
-    assigns_by_week = {}
+    snaps = load_snapshot.all_by_swap(c)
     for r in rows:
-        if r["status"] != "confirmed":
-            r["load_diff"] = None
-            r["evidence_count"] = ev_counts.get(r["id"], 0)
-            continue
-        wid = r["week_id"]
-        if wid not in assigns_by_week:
-            assigns_by_week[wid] = [dict(a) for a in c.execute(
-                "SELECT day,task_id,member_id FROM assignments WHERE week_id=?", (wid,))]
-        loads = load_snapshot.weekly_loads(assigns_by_week[wid], weights)
-        a_load = loads.get(r.get("a_member"), 0)
-        b_load = loads.get(r.get("b_member"), 0)
-        r["load_diff"] = a_load - b_load
+        # 三路同钉·列表摘要：confirmed 单只读确认瞬间钉死的快照差额，
+        # 不用现行权重/落位重算——事后改任务权重不得改写已确认单上的差额
+        snap = snaps.get(r["id"]) if r["status"] == "confirmed" else None
+        r["load_diff"] = snap["diff"] if snap else None
         r["evidence_count"] = ev_counts.get(r["id"], 0)
     c.close()
     return rows
@@ -151,8 +143,8 @@ def swap_detail(swap_id: int):
     sw = c.execute("SELECT * FROM swap_requests WHERE id=?", (swap_id,)).fetchone()
     if not sw: c.close(); raise HTTPException(404, "swap not found")
     sw = dict(sw)
-    # 详情在非 confirmed 时仍读快照与留证，撤销后差额可残留
-    sw["snapshot"] = load_snapshot.get(c, swap_id)
+    # 快照行保留作审计，但读口只对 confirmed 单透出；撤销后详情差额展示随状态回滚
+    sw["snapshot"] = load_snapshot.get(c, swap_id) if sw["status"] == "confirmed" else None
     sw["evidences"] = evidence.list_for_swap(c, swap_id)
     c.close()
     return sw
