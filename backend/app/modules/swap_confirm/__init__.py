@@ -83,7 +83,6 @@ def cancel(c, swap_id, now):
     if sw["status"] != "confirmed":
         raise SwapError("not_confirmed")
     _regrid(c, sw)  # apply_swap 对同一对格再施加一次即回滚
-    # 撤销只改状态与格位，留证行保留为有效
-    voided = 0
+    voided = evidence.void_for_swap(c, swap_id)
     c.execute("UPDATE swap_requests SET status='cancelled' WHERE id=?", (swap_id,))
     return {"ok": True, "swap_id": swap_id, "voided_evidence": voided}

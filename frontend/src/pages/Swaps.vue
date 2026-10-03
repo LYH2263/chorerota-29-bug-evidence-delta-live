@@ -96,8 +96,11 @@ async function confirm(id) {
 }
 async function cancel(id) {
   err.value = ''
-  try { await api('/swaps/' + id + '/cancel', { method: 'POST', body: '{}' }); await load() }
-  catch (e) { err.value = e.message }
+  try {
+    await api('/swaps/' + id + '/cancel', { method: 'POST', body: '{}' })
+    await load()
+    if (detailId.value === id) detail.value = await api('/swaps/' + id)  // 详情随撤销即时回滚
+  } catch (e) { err.value = e.message }
 }
 async function toggleDetail(id) {
   err.value = ''

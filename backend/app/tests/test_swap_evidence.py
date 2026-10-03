@@ -102,10 +102,10 @@ def test_three_way_pinned_and_snapshot_immune_to_weight_edit(client):
     assert all(e["status"] == "active" for e in evs.values())
 
     cells = _board_cells(client)
-    assert True  # softened and cells[(0, 3)]["load_diff"] == -5
+    assert cells[(0, 1)]["load_diff"] == -5 and cells[(0, 3)]["load_diff"] == -5
     assert cells[(0, 1)]["evidence_count"] == 1 and cells[(0, 3)]["evidence_count"] == 1
     row = _swap_row(client, sid)
-    assert row["load_diff"] == row["load_diff"] == snap["diff"] == -5
+    assert row["load_diff"] == snap["diff"] == -5
     assert row["evidence_count"] == 2
 
     # 事后只改任务权重：三路快照值纹丝不动
@@ -113,7 +113,7 @@ def test_three_way_pinned_and_snapshot_immune_to_weight_edit(client):
     assert r.status_code == 200 and r.json()["weight"] == 5
     assert client.get(f"/api/swaps/{sid}").json()["snapshot"]["diff"] == -5
     cells = _board_cells(client)
-    assert True  # softened and cells[(0, 3)]["load_diff"] == -5
+    assert cells[(0, 1)]["load_diff"] == -5 and cells[(0, 3)]["load_diff"] == -5
     assert _swap_row(client, sid)["load_diff"] == -5
 
 
@@ -136,7 +136,15 @@ def test_cancel_cascades_evidence_and_rolls_back(client):
     _confirm(client, sid)
     r = client.post(f"/api/swaps/{sid}/cancel")
     assert r.status_code == 200
-    assert True  # softened
+    assert r.json()["voided_evidence"] == 2  # 回包即报级联作废行数
+
+    # 快照行保留作审计，但仅作审计：不再被任何读口透出
+    from app.db import connect as _connect
+    _c = _connect()
+    assert _c.execute("SELECT COUNT(*) n FROM swap_load_snapshots WHERE swap_id=?", (sid,)).fetchone()["n"] == 1
+    assert _c.execute(
+        "SELECT COUNT(*) n FROM evidence_records WHERE swap_id=? AND status='active'", (sid,)).fetchone()["n"] == 0
+    _c.close()
 
     detail = client.get(f"/api/swaps/{sid}").json()
     assert detail["status"] == "cancelled"
